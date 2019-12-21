@@ -6,7 +6,7 @@ token passing algorithm in WFST decoding graph.
 """
 import sys
 import numpy as np
-import fst
+import openfst_python as fst
 
 class LatticeArc:
     """Arc used in Token
@@ -52,7 +52,7 @@ class WFSTDecoder:
         self.completed_token_pool = []
         self.num_steps_decoded = -1
         self.beam_delta = 0.5
-        self.fst = fst.read_std(fst_path)
+        self.fst = fst.Fst.read(fst_path)
         self.acoustic_scale = acoustic_scale
         self.max_active = max_active
         self.min_active = min_active
@@ -98,7 +98,7 @@ class WFSTDecoder:
         self.cur_toks = {}
         self.prev_toks = {}
         self.completed_token_pool = []
-        start_state = self.fst.start
+        start_state = self.fst.start()
         assert start_state != -1
         dummy_arc = LatticeArc(0, 0, 0.0, start_state)
         self.cur_toks[start_state] = Token(dummy_arc, 0.0, None, [self.sos], initial_packed_states)
@@ -113,9 +113,9 @@ class WFSTDecoder:
             eos_score: acoustic score of eos
         """
         tok = self.prev_toks[state]
-        if self.fst[state].final != fst.TropicalWeight.ZERO:
+        if self.fst.final(state).to_string() != fst.Weight.Zero('tropical').to_string():
             tok.rescaled_cost = ((tok.cost + (-eos_score) +
-                float(self.fst[state].final))/self.num_steps_decoded)
+                float(self.fst.final(state)))/self.num_steps_decoded)
             self.completed_token_pool.append(tok)
         queue = []
         tmp_toks = {}
@@ -124,12 +124,12 @@ class WFSTDecoder:
         while queue:
             state = queue.pop()
             tok = tmp_toks[state]
-            for arc in self.fst[state].arcs:
+            for arc in self.fst.arcs(state):
                 if arc.ilabel == 0:
                     new_tok = Token(arc, 0.0, tok, tok.cur_label, tok.inner_packed_states)
-                    if self.fst[arc.nextstate].final != fst.TropicalWeight.ZERO:
+                    if self.fst.final(arc.nextstate).to_string() != fst.Weight.Zero('tropical').to_string():
                         new_tok.rescaled_cost = ((new_tok.cost +
-                            float(self.fst[arc.nextstate].final))/self.num_steps_decoded)
+                            float(self.fst.final(arc.nextstate)))/self.num_steps_decoded)
                         self.completed_token_pool.append(new_tok)
                     else:
                         tmp_toks[arc.nextstate] = new_tok
@@ -157,7 +157,7 @@ class WFSTDecoder:
         weight_cutoff, adaptive_beam, best_token = self.get_cutoff()
         next_weight_cutoff = float('inf')
         if best_token is not None:
-            for arc in self.fst[best_token.arc.nextstate].arcs:
+            for arc in self.fst.arcs(best_token.arc.nextstate):
                 if arc.ilabel != 0:
                     ac_cost = (-all_log_scores[state2id[best_token.arc.nextstate]][arc.ilabel-1] *
                             self.acoustic_scale)
@@ -170,7 +170,7 @@ class WFSTDecoder:
                 if self.eos == np.argmax(all_log_scores[seq_id]):
                     self.deal_completed_token(state, all_log_scores[seq_id][self.eos])
                     continue
-                for arc in self.fst[state].arcs:
+                for arc in self.fst.arcs(state):
                     if arc.ilabel != 0:
                         ac_cost = -all_log_scores[seq_id][arc.ilabel-1] * self.acoustic_scale
                         new_weight = float(arc.weight) + tok.cost + ac_cost
@@ -199,7 +199,7 @@ class WFSTDecoder:
             tok = self.cur_toks[state]
             if tok.cost > cutoff:
                 continue
-            for arc in self.fst[state].arcs:
+            for arc in self.fst.arcs(state):
                 if arc.ilabel == 0:
                     new_tok = Token(arc, 0.0, tok, tok.cur_label, tok.inner_packed_states)
                     if new_tok.cost < cutoff:
@@ -278,7 +278,7 @@ class WFSTDecoder:
         while tok:
             arcs_reverse.append(tok.arc)
             tok = tok.prev_tok
-        assert arcs_reverse[-1].nextstate == self.fst.start
+        assert arcs_reverse[-1].nextstate == self.fst.start()
         arcs_reverse.pop()
         ans = []
         for arc in arcs_reverse[::-1]:
